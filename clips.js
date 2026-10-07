@@ -218,3 +218,35 @@
   }
   window.fxJoinClips = joinClips;
 })();
+
+// Botón visible: elegir videos (del teléfono o recién exportados) para guardarlos o unirlos
+(function () {
+  const exported = [];
+  window.__fxExported = exported;
+  const origShow = window.showClipResults;
+  window.showClipResults = (clips, o) => { clips.forEach((c) => exported.push(c)); origShow(clips, o); };
+  function addButton() {
+    const actions = document.querySelector(".actions");
+    if (!actions || document.querySelector("#fxJoinBtn")) return;
+    const b = document.createElement("button");
+    b.id = "fxJoinBtn"; b.type = "button"; b.textContent = "🎬 Unir / guardar videos";
+    b.style.cssText = "background:#ffd60a;color:#111;font-weight:800";
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = "video/*"; input.multiple = true; input.hidden = true;
+    input.onchange = () => {
+      const files = [...input.files];
+      input.value = "";
+      if (files.length) origShow(files.map((f) => ({ name: f.name, blob: f })));
+    };
+    b.onclick = () => {
+      if (exported.length && confirm(`Tienes ${exported.length} video(s) exportados. ¿Usar esos? (Cancelar = elegir de tu galería)`)) origShow(exported.slice());
+      else input.click();
+    };
+    actions.prepend(b); actions.append(input);
+    const ver = document.createElement("div");
+    ver.textContent = "Versión 3 · unir videos y guardar en Fotos";
+    ver.style.cssText = "font:600 12px Outfit,system-ui;color:#8ab4f8;margin:6px 0";
+    actions.after(ver);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", addButton); else addButton();
+})();
