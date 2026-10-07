@@ -3,6 +3,12 @@
 (function () {
   const isPhone = () => matchMedia("(pointer: coarse)").matches || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
   window.fxIsPhone = isPhone;
+  window.fxBitrate = (w, h, sec = 30) => {
+    let b = Math.round(w * h * 12);           // 1080p ≈ 25 Mbps, 2K ≈ 44, 4K ≈ 80 (tope)
+    b = Math.min(80_000_000, Math.max(8_000_000, b));
+    return sec > 120 ? Math.round(b / 2) : b;
+  };
+  try { window.fxQuality = localStorage.getItem("fxQuality") || "1080"; } catch { window.fxQuality = "1080"; }
 
   // En teléfono, por defecto MP4 (Fotos de iPhone no acepta WebM)
   document.addEventListener("DOMContentLoaded", () => {
@@ -59,17 +65,20 @@
     }, i * 400));
   }
 
-  const JOIN_DEFAULTS = { tr: "fade", td: 0.7, outro: true, outroText: "¡Dale like y suscríbete para más quizzes!" };
+  const JOIN_DEFAULTS = { intro: false, introText: "¿CUÁNTO SABES?", tr: "mix", td: 0.7, outro: true, outroText: "¡Dale like y suscríbete para más quizzes!" };
 
   function joinControlsHtml(o) {
     const opt = (v, l, cur) => `<option value="${v}"${String(v) === String(cur) ? " selected" : ""}>${l}</option>`;
     return `<label>Transición<select class="tr">
         ${opt("fade", "Fundido cruzado", o.tr)}${opt("black", "Fundido a negro", o.tr)}${opt("slide", "Deslizar", o.tr)}
-        ${opt("zoom", "Zoom", o.tr)}${opt("flash", "Destello blanco", o.tr)}${opt("cut", "Sin transición (corte)", o.tr)}
+        ${opt("zoom", "Zoom", o.tr)}${opt("flash", "Destello blanco", o.tr)}${opt("circle", "Círculo", o.tr)}
+        ${opt("wipe", "Barrido", o.tr)}${opt("spin", "Giro", o.tr)}${opt("mix", "Variadas (una distinta cada vez)", o.tr)}${opt("cut", "Sin transición (corte)", o.tr)}
       </select></label>
       <label>Duración de la transición<select class="td">
         ${opt(0.4, "0.4 s (rápida)", o.td)}${opt(0.7, "0.7 s", o.td)}${opt(1, "1 s (suave)", o.td)}
       </select></label>
+      <label class="ck"><input type="checkbox" class="ic"${o.intro ? " checked" : ""}/> Agregar portada al inicio (2.5 s)</label>
+      <label>Texto de la portada<input type="text" class="it" value="${(o.introText || "").replace(/"/g, "&quot;")}" placeholder="Ej.: ¿CUÁNTO SABES?"/></label>
       <label class="ck"><input type="checkbox" class="oc"${o.outro ? " checked" : ""}/> Agregar final de like y suscríbete (4 s)</label>
       <label>Texto del final<input type="text" class="ot" value="${o.outroText.replace(/"/g, "&quot;")}"/></label>`;
   }
@@ -78,6 +87,8 @@
     td: Number(root.querySelector(".td").value),
     outro: root.querySelector(".oc").checked,
     outroText: root.querySelector(".ot").value.trim() || JOIN_DEFAULTS.outroText,
+    intro: root.querySelector(".ic").checked,
+    introText: root.querySelector(".it").value.trim() || JOIN_DEFAULTS.introText,
   });
 
   // Muestra el panel. opts.autoJoin = {ac, ...ajustes} une de inmediato.
@@ -123,7 +134,7 @@
       j.querySelector(".result").innerHTML = "";
       try {
         const blob = await joinClips(clips.map((x) => x.blob), c.tr, c.td, ac,
-          (p) => { bar.firstElementChild.style.width = Math.round(p * 100) + "%"; }, c.outro ? { text: c.outroText, seconds: 4 } : null);
+          (p) => { bar.firstElementChild.style.width = Math.round(p * 100) + "%"; }, c.outro ? { text: c.outroText, seconds: 4 } : null, c.intro ? { text: c.introText, count: n, seconds: 2.5 } : null);
         const name = `quiz-completo-${n}.${blob.type.includes("mp4") ? "mp4" : "webm"}`;
         const res = j.querySelector(".result");
         const v = document.createElement("video"); v.src = URL.createObjectURL(blob); v.controls = true; v.playsInline = true;
@@ -222,6 +233,38 @@
     lines.forEach((l, i) => { const y = H * 0.8 + (i - (lines.length - 1) / 2) * u * 0.07; ctx.strokeText(l, W / 2, y); ctx.fillText(l, W / 2, y); });
     ctx.globalAlpha = 1;
   }
+  function drawIntro(ctx, W, H, t, text, count) {
+    const u = Math.min(W, H);
+    const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.hypot(W, H) / 2);
+    g.addColorStop(0, "#5b1bb3"); g.addColorStop(1, "#12052e");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(t * 0.25);
+    for (let i = 0; i < 16; i++) { ctx.rotate(Math.PI / 8); ctx.fillStyle = i % 2 ? "rgba(255,255,255,0.05)" : "rgba(255,214,10,0.07)"; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.hypot(W, H), -u * 0.12); ctx.lineTo(Math.hypot(W, H), u * 0.12); ctx.fill(); }
+    ctx.restore();
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const s = pop(t / 0.55);
+    ctx.save(); ctx.translate(W / 2, H * 0.44); ctx.scale(s, s); ctx.rotate(Math.sin(t * 2) * 0.03);
+    ctx.font = `900 ${u * 0.11}px "Luckiest Guy", Outfit, system-ui`; ctx.lineWidth = u * 0.018; ctx.strokeStyle = "#000"; ctx.fillStyle = "#ffd60a";
+    const lines = wrap(ctx, text.toUpperCase(), W * 0.86);
+    lines.forEach((l, i) => { const y = (i - (lines.length - 1) / 2) * u * 0.12; ctx.strokeText(l, 0, y); ctx.fillText(l, 0, y); });
+    ctx.restore();
+    const s2 = pop((t - 0.5) / 0.45);
+    if (s2 > 0) {
+      ctx.save(); ctx.translate(W / 2, H * 0.62); ctx.scale(s2, s2);
+      const label = `${count} PREGUNTAS`; ctx.font = `800 ${u * 0.06}px Outfit, system-ui`;
+      const w = ctx.measureText(label).width + u * 0.12, h = u * 0.1;
+      rr(ctx, -w / 2, -h / 2, w, h, h / 2); ctx.fillStyle = "#e8112d"; ctx.fill(); ctx.fillStyle = "#fff"; ctx.fillText(label, 0, 2); ctx.restore();
+    }
+  }
+  function introSounds(ac, dest, t0) {
+    const o = ac.createOscillator(), g = ac.createGain(); o.type = "sawtooth";
+    o.frequency.setValueAtTime(180, t0); o.frequency.exponentialRampToValueAtTime(900, t0 + 0.5);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.6);
+    o.connect(g).connect(dest); o.start(t0); o.stop(t0 + 0.65);
+    const o2 = ac.createOscillator(), g2 = ac.createGain(); o2.type = "triangle"; o2.frequency.setValueAtTime(660, t0 + 0.55);
+    g2.gain.setValueAtTime(0.0001, t0 + 0.55); g2.gain.exponentialRampToValueAtTime(0.35, t0 + 0.57); g2.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.9);
+    o2.connect(g2).connect(dest); o2.start(t0 + 0.55); o2.stop(t0 + 0.95);
+  }
   function outroSounds(ac, dest, t0) {
     const blip = (at, f) => {
       const o = ac.createOscillator(), g = ac.createGain(); o.type = "triangle"; o.frequency.setValueAtTime(f, at);
@@ -232,7 +275,7 @@
     blip(t0 + 0.05, 520); blip(t0 + 0.7, 660); blip(t0 + 1.0, 660); blip(t0 + 1.6, 880); blip(t0 + 2.6, 990);
   }
 
-  async function joinClips(blobs, tr, T, ac, onProgress, outro) {
+  async function joinClips(blobs, tr, T, ac, onProgress, outro, intro) {
     if (tr === "cut") T = 0;
     const vids = await Promise.all(blobs.map(loadVideo));
     const bufs = new Array(blobs.length).fill(null);
@@ -242,12 +285,12 @@
     const dur = vids.map((v, i) => (isFinite(v.duration) && v.duration > 0 ? v.duration : bufs[i]?.duration || 6));
     const W = vids[0].videoWidth || 1080, H = vids[0].videoHeight || 1920;
     // la lista de "pistas": videos + final opcional
-    const items = vids.map((v, i) => ({ v, dur: dur[i] }));
-    let outroCanvas = null;
-    if (outro) {
-      outroCanvas = document.createElement("canvas"); outroCanvas.width = W; outroCanvas.height = H;
-      items.push({ outro: true, dur: outro.seconds || 4 });
-    }
+    const items = vids.map((v, i) => ({ v, dur: dur[i], buf: bufs[i] }));
+    const cardCanvas = document.createElement("canvas"); cardCanvas.width = W; cardCanvas.height = H;
+    if (intro) items.unshift({ card: (c, t) => drawIntro(c, W, H, t, intro.text, intro.count), dur: intro.seconds || 2.5, sfx: (a, d, t0) => introSounds(a, d, t0) });
+    if (outro) items.push({ card: (c, t) => drawOutro(c, W, H, t, outro.text), dur: outro.seconds || 4, sfx: (a, d, t0) => outroSounds(a, d, t0) });
+    const TR_MIX = ["fade", "slide", "zoom", "circle", "wipe", "spin", "flash"];
+    const trFor = (i) => (tr === "mix" ? TR_MIX[i % TR_MIX.length] : tr);
     T = Math.min(T, ...items.map((x) => x.dur / 2));
     const start = []; let acc = 0;
     items.forEach((x, i) => { start.push(acc); acc += x.dur - (i < items.length - 1 ? T : 0); });
@@ -258,25 +301,26 @@
     const stream = cv.captureStream(0);
     const vtrack = stream.getVideoTracks()[0];
     const dest = ac.createMediaStreamDestination();
-    if (bufs.some(Boolean) || outro) dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+    if (bufs.some(Boolean) || outro || intro) dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
     const mime = pickMime();
-    const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 10_000_000 });
+    const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: window.fxBitrate(W, H, total) });
     const chunks = []; rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     const done = new Promise((ok) => { rec.onstop = ok; });
 
     await ac.resume();
     const base = ac.currentTime + 0.25;
-    bufs.forEach((b, i) => {
+    items.forEach((it, i) => {
+      if (it.sfx) { it.sfx(ac, dest, base + start[i]); return; }
+      const b = it.buf;
       if (!b) return;
       const s = ac.createBufferSource(); s.buffer = b;
       const g = ac.createGain(); s.connect(g).connect(dest);
-      const t0 = base + start[i], t1 = t0 + dur[i];
+      const t0 = base + start[i], t1 = t0 + it.dur;
       g.gain.setValueAtTime(T && i > 0 ? 0 : 1, t0);
       if (T && i > 0) g.gain.linearRampToValueAtTime(1, t0 + T);
       if (T && i < items.length - 1) { g.gain.setValueAtTime(1, t1 - T); g.gain.linearRampToValueAtTime(0, t1); }
-      s.start(t0, 0, dur[i]);
+      s.start(t0, 0, it.dur);
     });
-    if (outro) outroSounds(ac, dest, base + start[items.length - 1]);
     rec.start(250);
     const started = new Set();
 
@@ -284,7 +328,7 @@
       if (alpha <= 0) return;
       const it = items[i];
       let src;
-      if (it.outro) { drawOutro(outroCanvas.getContext("2d"), W, H, Math.max(0, t - start[i]), outro.text); src = outroCanvas; }
+      if (it.card) { it.card(cardCanvas.getContext("2d"), Math.max(0, t - start[i])); src = cardCanvas; }
       else { src = it.v; if (src.readyState < 2) return; }
       const vw = src.videoWidth || src.width || W, vh = src.videoHeight || src.height || H;
       const k = Math.max(W / vw, H / vh) * scale, w = vw * k, h = vh * k;
@@ -296,9 +340,10 @@
     await new Promise((finish) => {
       const tick = () => {
         const t = ac.currentTime - base;
-        vids.forEach((v, i) => {
+        items.forEach((it, i) => {
+          const v = it.v; if (!v) return;
           if (!started.has(i) && t >= start[i] - 0.03) { started.add(i); v.currentTime = Math.max(0, t - start[i]); v.play().catch(() => {}); }
-          if (t > start[i] + dur[i] + 0.1 && !v.paused) v.pause();
+          if (t > start[i] + it.dur + 0.1 && !v.paused) v.pause();
         });
         ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
         const act = [];
@@ -308,12 +353,21 @@
           const a = act[0], b = act[1];
           const p = Math.min(1, Math.max(0, (t - start[b]) / T));
           const e = p * p * (3 - 2 * p);
-          if (tr === "fade") { draw(a, t); draw(b, t, e); }
+          const tr = trFor(b);
+          if (tr === "circle") {
+            draw(a, t); ctx.save(); ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.hypot(W, H) / 2 * e, 0, 7); ctx.clip(); draw(b, t); ctx.restore();
+          } else if (tr === "wipe") {
+            draw(a, t); ctx.save(); ctx.beginPath(); const x = (W + H * 0.4) * e; ctx.moveTo(0, 0); ctx.lineTo(x, 0); ctx.lineTo(x - H * 0.4, H); ctx.lineTo(0, H); ctx.closePath(); ctx.clip(); draw(b, t); ctx.restore();
+            ctx.fillStyle = "#ffd60a"; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + W * 0.02, 0); ctx.lineTo(x - H * 0.4 + W * 0.02, H); ctx.lineTo(x - H * 0.4, H); ctx.fill();
+          } else if (tr === "spin") {
+            const which = p < 0.5 ? a : b, k = p < 0.5 ? p * 2 : (1 - p) * 2;
+            ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate((p < 0.5 ? 1 : -1) * k * 0.6); ctx.scale(1 - k * 0.5, 1 - k * 0.5); ctx.translate(-W / 2, -H / 2); draw(which, t); ctx.restore();
+          } else if (tr === "fade") { draw(a, t); draw(b, t, e); }
           else if (tr === "black") { if (p < 0.5) draw(a, t, 1 - p * 2); else draw(b, t, (p - 0.5) * 2); }
           else if (tr === "slide") { draw(a, t, 1, -W * e); draw(b, t, 1, W * (1 - e)); }
           else if (tr === "zoom") { draw(a, t, 1 - e, 0, 1 + e * 0.6); draw(b, t, e, 0, 1.4 - 0.4 * e); }
           else if (tr === "flash") { draw(p < 0.5 ? a : b, t); ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(p - 0.5) * 2})`; ctx.fillRect(0, 0, W, H); }
-        } else if (outro && t >= start[items.length - 1]) draw(items.length - 1, t);
+        } else if (t >= start[items.length - 1]) draw(items.length - 1, t);
         vtrack.requestFrame?.();
         onProgress?.(Math.min(1, Math.max(0, t / total)));
         if (t >= total) { finish(); return; }
@@ -351,7 +405,7 @@
     b.onclick = () => input.click();
     actions.prepend(b); actions.append(input);
     const ver = document.createElement("div");
-    ver.textContent = "Versión 4 · quiz completo en un solo video";
+    ver.textContent = "Versión 5 · 1080p/2K/4K, portada, más transiciones";
     ver.style.cssText = "font:600 12px Outfit,system-ui;color:#8ab4f8;margin:6px 0";
     actions.after(ver);
   }
@@ -384,6 +438,24 @@
       window.__fxBatchJoin = { ac, ...window.fxReadJoinControls(box) };
     }, true);
   }
-  const init = () => { addButton(); addBatchOptions(); };
+  function addQuality() {
+    const fmt = document.querySelector("#outFormat");
+    if (!fmt || document.querySelector("#fxQualitySel")) return;
+    const label = document.createElement("label");
+    label.className = "accent";
+    label.innerHTML = `Calidad del video<select id="fxQualitySel">
+      <option value="1080">Full HD 1080p (recomendada)</option>
+      <option value="1440">2K 1440p (más nítida)</option>
+      <option value="2160">4K 2160p (máxima, tarda más)</option>
+      <option value="720">720p (rápida, archivo chico)</option></select>`;
+    fmt.closest("label").after(label);
+    const sel = label.querySelector("select"); sel.value = window.fxQuality;
+    sel.onchange = () => {
+      window.fxQuality = sel.value;
+      try { localStorage.setItem("fxQuality", sel.value); } catch {}
+      try { window.updateOutputs?.(); window.redrawIdle?.(); } catch (e) { console.error(e); }
+    };
+  }
+  const init = () => { addButton(); addBatchOptions(); addQuality(); try { window.updateOutputs?.(); window.redrawIdle?.(); } catch {} };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 })();

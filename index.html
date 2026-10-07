@@ -11179,9 +11179,9 @@ function canFastExport() {
 }
 
 async function pickVideoCodec(width, height, bitrate) {
-  const codecs = ["avc1.640028", "avc1.4d0028", "avc1.640033", "avc1.42E028"];
+  const codecs = ["avc1.640028", "avc1.640032", "avc1.640033", "avc1.640034", "avc1.4d0028", "avc1.4d0033", "avc1.42E028"];
   for (const codec of codecs) {
-    const config = { codec, width, height, bitrate, framerate: FAST_FPS, avc: { format: "avc" }, latencyMode: "realtime" };
+    const config = { codec, width, height, bitrate, framerate: FAST_FPS, avc: { format: "avc" }, latencyMode: "quality", bitrateMode: "variable" };
     try {
       const support = await VideoEncoder.isConfigSupported(config);
       if (support.supported) return config;
@@ -11254,7 +11254,7 @@ async function fastExport() {
   const totalFrames = Math.max(1, Math.round(seconds * FAST_FPS));
   const width = canvas.width;
   const height = canvas.height;
-  const bitrate = seconds > 120 ? 6_000_000 : 12_000_000;
+  const bitrate = window.fxBitrate ? window.fxBitrate(width, height, seconds) : 12_000_000;
   const videoConfig = await pickVideoCodec(width, height, bitrate);
   if (!videoConfig) return false;
 
@@ -11510,7 +11510,7 @@ async function fastExportWebm() {
   const totalFrames = Math.max(1, Math.round(seconds * FAST_FPS));
   const width = canvas.width;
   const height = canvas.height;
-  const bitrate = seconds > 120 ? 6_000_000 : 10_000_000;
+  const bitrate = window.fxBitrate ? window.fxBitrate(width, height, seconds) : 10_000_000;
   const colorConfig = await pickVpxConfig(width, height, bitrate);
   const withAlpha = !(hasMediaBackground(s) || s.bgMode === "green");
   const alphaConfig = colorConfig && withAlpha ? await pickVpxConfig(width, height, Math.round(bitrate / 3)) : null;
@@ -12710,8 +12710,10 @@ function drawFrame(t, elapsedSeconds = null) {
 }
 
 function setCanvasFormat(format) {
-  const width = format === "vertical" ? 1080 : 1280;
-  const height = format === "vertical" ? 1920 : 720;
+  const RES = { "720": [720, 1280], "1080": [1080, 1920], "1440": [1440, 2560], "2160": [2160, 3840] };
+  const [shortSide, longSide] = RES[window.fxQuality || "1080"] || RES["1080"];
+  const width = format === "vertical" ? shortSide : longSide;
+  const height = format === "vertical" ? longSide : shortSide;
   if (canvas.width === width && canvas.height === height) return;
   canvas.width = width;
   canvas.height = height;
@@ -14029,7 +14031,7 @@ async function recordRealtime() {
   await startMediaPlayback(audioContext, audioDestination);
   scheduleSound(audioContext, audioDestination, s);
   audioDestination.stream.getAudioTracks().forEach((track) => stream.addTrack(track));
-  const recorder = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: 12_000_000 });
+  const recorder = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: window.fxBitrate ? window.fxBitrate(canvas.width, canvas.height, 30) : 12_000_000 });
   const ext = (recorder.mimeType || mime).includes("mp4") ? "mp4" : "webm";
   const chunks = [];
   const warn = () => {
@@ -15834,7 +15836,7 @@ redrawIdle();
 document.querySelector(`.sidebar .preset:not(.clone)[data-preset="${currentPreset}"]`)?.classList.add("active");
 
 </script>
-  <script src="/clips.js?v=4"></script>
+  <script src="/clips.js?v=5"></script>
 <script>if('serviceWorker' in navigator){let r=!!navigator.serviceWorker.controller;navigator.serviceWorker.register('/sw.js').then(g=>g.update());navigator.serviceWorker.addEventListener('controllerchange',()=>{if(r){r=false;location.reload()}});}</script>
 </body>
 </html>
