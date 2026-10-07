@@ -52,8 +52,15 @@
 
   const toFile = (c) => new File([c.blob], c.name.replace(/\.\w+$/, "") + "." + (c.blob.type.includes("mp4") ? "mp4" : (c.name.split(".").pop() || "mp4")), { type: c.blob.type || "video/mp4" });
 
-  async function saveFiles(list, btn) {
+  function downloadFiles(files) {
+    files.forEach((f, i) => setTimeout(() => {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(f); a.download = f.name;
+      document.body.appendChild(a); a.click(); a.remove();
+    }, i * 400));
+  }
+  async function saveFiles(list, btn, mode) {
     const files = list.map(toFile);
+    if (mode === "download" || !isPhone()) { downloadFiles(files); if (btn) btn.textContent = "✓ Descargado"; return; }
     if (navigator.canShare && navigator.canShare({ files })) {
       try { await navigator.share({ files }); if (btn) btn.textContent = "✓ Listo"; }
       catch (e) { if (e.name !== "AbortError") alert("No se pudo abrir Compartir: " + e.message); }
@@ -130,7 +137,7 @@
       const c = readControls(j);
       go.disabled = true; go.textContent = "Creando video...";
       const bar = j.querySelector(".bar"); bar.hidden = false; bar.firstElementChild.style.width = "0";
-      const msg = j.querySelector(".msg"); msg.textContent = "No cierres la app mientras se crea.";
+      const msg = j.querySelector(".msg"); msg.textContent = "Se arma cuadro por cuadro para que salga fluido. No cierres la app.";
       j.querySelector(".result").innerHTML = "";
       try {
         const blob = await joinClips(clips.map((x) => x.blob), c.tr, c.td, ac,
@@ -141,6 +148,13 @@
         const sb = document.createElement("button"); sb.className = "pri big"; sb.textContent = isPhone() ? "📲 Guardar en Fotos" : "⬇ Descargar video";
         sb.onclick = () => saveFiles([{ name, blob }], sb);
         res.append(v, sb);
+        if (isPhone()) {
+          const db = document.createElement("button"); db.className = "sec big"; db.textContent = "⬇ Descargar a Archivos";
+          db.onclick = () => saveFiles([{ name, blob }], db, "download");
+          const hint = document.createElement("p"); hint.style.marginTop = "8px";
+          hint.innerHTML = "iPhone no deja que una página guarde directo en Fotos: en el menú que aparece toca <b>Guardar video</b> (ícono de flecha hacia abajo) y queda en tu carrete. Si prefieres, <b>Descargar a Archivos</b> lo deja en la carpeta Descargas.";
+          res.append(db, hint);
+        }
         bar.hidden = true;
         msg.textContent = `¡Listo! ${Math.round(v.duration || 0) ? "" : ""}Toca el botón para guardarlo.`;
         body.querySelector("h3").textContent = "Tu video está listo"; const p0 = body.querySelector("p"); if (p0) p0.textContent = "Revísalo abajo y guárdalo.";
@@ -275,16 +289,36 @@
     blip(t0 + 0.05, 520); blip(t0 + 0.7, 660); blip(t0 + 1.0, 660); blip(t0 + 1.6, 880); blip(t0 + 2.6, 990);
   }
 
+  async function decodeAudio(blob) {
+    try {
+      const Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      const tmp = new Off(2, 48000, 48000);
+      return await tmp.decodeAudioData(await blob.arrayBuffer());
+    } catch { return null; }
+  }
+
+  function seekTo(v, t) {
+    return new Promise((res) => {
+      if (Math.abs(v.currentTime - t) < 0.0005 && v.readyState >= 2) return res();
+      let finished = false;
+      const end = () => { if (!finished) { finished = true; res(); } };
+      const onSeek = () => {
+        v.removeEventListener("seeked", onSeek);
+        if (v.requestVideoFrameCallback) { v.requestVideoFrameCallback(end); setTimeout(end, 25); } else end();
+      };
+      v.addEventListener("seeked", onSeek);
+      setTimeout(() => { v.removeEventListener("seeked", onSeek); end(); }, 1500);
+      v.currentTime = t;
+    });
+  }
+
   async function joinClips(blobs, tr, T, ac, onProgress, outro, intro) {
     if (tr === "cut") T = 0;
     const vids = await Promise.all(blobs.map(loadVideo));
-    const bufs = new Array(blobs.length).fill(null);
-    for (let i = 0; i < blobs.length; i++) {
-      try { bufs[i] = await ac.decodeAudioData(await blobs[i].arrayBuffer()); } catch { bufs[i] = null; }
-    }
+    const bufs = [];
+    for (const b of blobs) bufs.push(await decodeAudio(b));
     const dur = vids.map((v, i) => (isFinite(v.duration) && v.duration > 0 ? v.duration : bufs[i]?.duration || 6));
     const W = vids[0].videoWidth || 1080, H = vids[0].videoHeight || 1920;
-    // la lista de "pistas": videos + final opcional
     const items = vids.map((v, i) => ({ v, dur: dur[i], buf: bufs[i] }));
     const cardCanvas = document.createElement("canvas"); cardCanvas.width = W; cardCanvas.height = H;
     if (intro) items.unshift({ card: (c, t) => drawIntro(c, W, H, t, intro.text, intro.count), dur: intro.seconds || 2.5, sfx: (a, d, t0) => introSounds(a, d, t0) });
@@ -297,33 +331,8 @@
     const total = acc;
     const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
     const ctx = cv.getContext("2d");
-    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
-    const stream = cv.captureStream(0);
-    const vtrack = stream.getVideoTracks()[0];
-    const dest = ac.createMediaStreamDestination();
-    if (bufs.some(Boolean) || outro || intro) dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
-    const mime = pickMime();
-    const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: window.fxBitrate(W, H, total) });
-    const chunks = []; rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    const done = new Promise((ok) => { rec.onstop = ok; });
 
-    await ac.resume();
-    const base = ac.currentTime + 0.25;
-    items.forEach((it, i) => {
-      if (it.sfx) { it.sfx(ac, dest, base + start[i]); return; }
-      const b = it.buf;
-      if (!b) return;
-      const s = ac.createBufferSource(); s.buffer = b;
-      const g = ac.createGain(); s.connect(g).connect(dest);
-      const t0 = base + start[i], t1 = t0 + it.dur;
-      g.gain.setValueAtTime(T && i > 0 ? 0 : 1, t0);
-      if (T && i > 0) g.gain.linearRampToValueAtTime(1, t0 + T);
-      if (T && i < items.length - 1) { g.gain.setValueAtTime(1, t1 - T); g.gain.linearRampToValueAtTime(0, t1); }
-      s.start(t0, 0, it.dur);
-    });
-    rec.start(250);
-    const started = new Set();
-
+    const activeAt = (t) => { const a = []; for (let i = 0; i < items.length; i++) if (t >= start[i] && t < start[i] + items[i].dur) a.push(i); if (!a.length) a.push(items.length - 1); return a; };
     const draw = (i, t, alpha = 1, dx = 0, scale = 1) => {
       if (alpha <= 0) return;
       const it = items[i];
@@ -336,49 +345,139 @@
       ctx.drawImage(src, (W - w) / 2 + dx, (H - h) / 2, w, h);
       ctx.globalAlpha = 1;
     };
+    const compose = (t) => {
+      ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+      const act = activeAt(t);
+      if (act.length === 1 || !T) { draw(act[act.length - 1], t); return; }
+      const a = act[0], b = act[1];
+      const p = Math.min(1, Math.max(0, (t - start[b]) / T));
+      const e = p * p * (3 - 2 * p);
+      const kind = trFor(b);
+      if (kind === "circle") {
+        draw(a, t); ctx.save(); ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.hypot(W, H) / 2 * e, 0, 7); ctx.clip(); draw(b, t); ctx.restore();
+      } else if (kind === "wipe") {
+        draw(a, t); ctx.save(); ctx.beginPath(); const x = (W + H * 0.4) * e; ctx.moveTo(0, 0); ctx.lineTo(x, 0); ctx.lineTo(x - H * 0.4, H); ctx.lineTo(0, H); ctx.closePath(); ctx.clip(); draw(b, t); ctx.restore();
+        ctx.fillStyle = "#ffd60a"; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + W * 0.02, 0); ctx.lineTo(x - H * 0.4 + W * 0.02, H); ctx.lineTo(x - H * 0.4, H); ctx.fill();
+      } else if (kind === "spin") {
+        const which = p < 0.5 ? a : b, k = p < 0.5 ? p * 2 : (1 - p) * 2;
+        ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate((p < 0.5 ? 1 : -1) * k * 0.6); ctx.scale(1 - k * 0.5, 1 - k * 0.5); ctx.translate(-W / 2, -H / 2); draw(which, t); ctx.restore();
+      } else if (kind === "fade") { draw(a, t); draw(b, t, e); }
+      else if (kind === "black") { if (p < 0.5) draw(a, t, 1 - p * 2); else draw(b, t, (p - 0.5) * 2); }
+      else if (kind === "slide") { draw(a, t, 1, -W * e); draw(b, t, 1, W * (1 - e)); }
+      else if (kind === "zoom") { draw(a, t, 1 - e, 0, 1 + e * 0.6); draw(b, t, e, 0, 1.4 - 0.4 * e); }
+      else if (kind === "flash") { draw(p < 0.5 ? a : b, t); ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(p - 0.5) * 2})`; ctx.fillRect(0, 0, W, H); }
+      else draw(b, t);
+    };
+    const scheduleAudio = (actx, dest, base) => {
+      items.forEach((it, i) => {
+        if (it.sfx) { it.sfx(actx, dest, base + start[i]); return; }
+        if (!it.buf) return;
+        const s = actx.createBufferSource(); s.buffer = it.buf;
+        const g = actx.createGain(); s.connect(g).connect(dest);
+        const t0 = base + start[i], t1 = t0 + it.dur;
+        g.gain.setValueAtTime(T && i > 0 ? 0 : 1, t0);
+        if (T && i > 0) g.gain.linearRampToValueAtTime(1, t0 + T);
+        if (T && i < items.length - 1) { g.gain.setValueAtTime(1, t1 - T); g.gain.linearRampToValueAtTime(0, t1); }
+        s.start(t0, 0, it.dur);
+      });
+    };
+    const cleanup = () => vids.forEach((v) => { v.pause(); URL.revokeObjectURL(v.src); });
 
-    await new Promise((finish) => {
-      const tick = () => {
-        const t = ac.currentTime - base;
-        items.forEach((it, i) => {
-          const v = it.v; if (!v) return;
-          if (!started.has(i) && t >= start[i] - 0.03) { started.add(i); v.currentTime = Math.max(0, t - start[i]); v.play().catch(() => {}); }
-          if (t > start[i] + it.dur + 0.1 && !v.paused) v.pause();
-        });
-        ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
-        const act = [];
-        for (let i = 0; i < items.length; i++) if (t >= start[i] && t < start[i] + items[i].dur) act.push(i);
-        if (act.length === 1 || (act.length === 2 && !T)) draw(act[act.length - 1], t);
-        else if (act.length >= 2) {
-          const a = act[0], b = act[1];
-          const p = Math.min(1, Math.max(0, (t - start[b]) / T));
-          const e = p * p * (3 - 2 * p);
-          const tr = trFor(b);
-          if (tr === "circle") {
-            draw(a, t); ctx.save(); ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.hypot(W, H) / 2 * e, 0, 7); ctx.clip(); draw(b, t); ctx.restore();
-          } else if (tr === "wipe") {
-            draw(a, t); ctx.save(); ctx.beginPath(); const x = (W + H * 0.4) * e; ctx.moveTo(0, 0); ctx.lineTo(x, 0); ctx.lineTo(x - H * 0.4, H); ctx.lineTo(0, H); ctx.closePath(); ctx.clip(); draw(b, t); ctx.restore();
-            ctx.fillStyle = "#ffd60a"; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + W * 0.02, 0); ctx.lineTo(x - H * 0.4 + W * 0.02, H); ctx.lineTo(x - H * 0.4, H); ctx.fill();
-          } else if (tr === "spin") {
-            const which = p < 0.5 ? a : b, k = p < 0.5 ? p * 2 : (1 - p) * 2;
-            ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate((p < 0.5 ? 1 : -1) * k * 0.6); ctx.scale(1 - k * 0.5, 1 - k * 0.5); ctx.translate(-W / 2, -H / 2); draw(which, t); ctx.restore();
-          } else if (tr === "fade") { draw(a, t); draw(b, t, e); }
-          else if (tr === "black") { if (p < 0.5) draw(a, t, 1 - p * 2); else draw(b, t, (p - 0.5) * 2); }
-          else if (tr === "slide") { draw(a, t, 1, -W * e); draw(b, t, 1, W * (1 - e)); }
-          else if (tr === "zoom") { draw(a, t, 1 - e, 0, 1 + e * 0.6); draw(b, t, e, 0, 1.4 - 0.4 * e); }
-          else if (tr === "flash") { draw(p < 0.5 ? a : b, t); ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(p - 0.5) * 2})`; ctx.fillRect(0, 0, W, H); }
-        } else if (t >= start[items.length - 1]) draw(items.length - 1, t);
-        vtrack.requestFrame?.();
-        onProgress?.(Math.min(1, Math.max(0, t / total)));
-        if (t >= total) { finish(); return; }
+    // ---- Cuadro por cuadro (fluido, sin tirones) ----
+    const canOffline = typeof VideoEncoder !== "undefined" && typeof VideoFrame !== "undefined" && typeof window.pickVideoCodec === "function" && typeof window.buildMp4 === "function";
+    if (canOffline) {
+      try {
+        const blob = await joinOffline();
+        cleanup();
+        return blob;
+      } catch (err) {
+        console.error("Unión cuadro por cuadro falló, uso tiempo real", err);
+      }
+    }
+    try { return await joinRealtime(); } finally { cleanup(); }
+
+    async function joinOffline() {
+      const FPS = 30;
+      const frames = Math.ceil(total * FPS);
+      const config = await window.pickVideoCodec(W, H, window.fxBitrate(W, H, total));
+      if (!config) throw new Error("sin codificador");
+      const samples = []; let avcC = null; let failed = null;
+      const enc = new VideoEncoder({
+        output: (chunk, meta) => {
+          if (meta?.decoderConfig?.description && !avcC) avcC = new Uint8Array(meta.decoderConfig.description);
+          const d = new Uint8Array(chunk.byteLength); chunk.copyTo(d); samples.push({ data: d, key: chunk.type === "key" });
+        },
+        error: (e) => { failed = e; },
+      });
+      enc.configure(config);
+      try {
+        for (let f = 0; f < frames; f++) {
+          if (failed) throw failed;
+          const t = f / FPS;
+          const act = activeAt(t);
+          for (const i of act) {
+            const v = items[i].v;
+            if (v) await seekTo(v, Math.min(Math.max(0, t - start[i]), items[i].dur - 0.02));
+          }
+          compose(t);
+          const vf = new VideoFrame(cv, { timestamp: Math.round((f * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
+          enc.encode(vf, { keyFrame: f % (FPS * 2) === 0 });
+          vf.close();
+          while (enc.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 5));
+          if (f % 5 === 0) { onProgress?.(0.92 * f / frames); await new Promise((r) => setTimeout(r, 0)); }
+        }
+        await enc.flush();
+      } finally { try { enc.close(); } catch {} }
+      if (failed || !samples.length || !avcC) throw failed || new Error("no se generó video");
+      // sonido
+      let audio = null;
+      try {
+        const Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+        const off = new Off(2, Math.ceil(total * 48000) + 4800, 48000);
+        scheduleAudio(off, off.destination, 0);
+        const rendered = await off.startRendering();
+        const acfg = await window.pickAudioConfig?.();
+        if (acfg) audio = await window.encodeAudio(rendered, acfg);
+      } catch (e) { console.error("audio", e); }
+      onProgress?.(1);
+      return new Blob([window.buildMp4({ width: W, height: H, fps: FPS, samples, avcC, audio })], { type: "video/mp4" });
+    }
+
+    async function joinRealtime() {
+      ac = ac || new AudioContext();
+      const stream = cv.captureStream(0);
+      const vtrack = stream.getVideoTracks()[0];
+      const dest = ac.createMediaStreamDestination();
+      dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+      const mime = pickMime();
+      const rec = new MediaRecorder(stream, { ...(mime ? { mimeType: mime } : {}), videoBitsPerSecond: window.fxBitrate(W, H, total) });
+      const chunks = []; rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      const done = new Promise((ok) => { rec.onstop = ok; });
+      await ac.resume();
+      const base = ac.currentTime + 0.25;
+      scheduleAudio(ac, dest, base);
+      rec.start(250);
+      const started = new Set();
+      await new Promise((finish) => {
+        const tick = () => {
+          const t = ac.currentTime - base;
+          items.forEach((it, i) => {
+            const v = it.v; if (!v) return;
+            if (!started.has(i) && t >= start[i] - 0.03) { started.add(i); v.currentTime = Math.max(0, t - start[i]); v.play().catch(() => {}); }
+            if (t > start[i] + it.dur + 0.1 && !v.paused) v.pause();
+          });
+          compose(Math.max(0, t));
+          vtrack.requestFrame?.();
+          onProgress?.(Math.min(1, Math.max(0, t / total)));
+          if (t >= total) { finish(); return; }
+          requestAnimationFrame(tick);
+        };
         requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    });
-    rec.stop();
-    await done;
-    vids.forEach((v) => { v.pause(); URL.revokeObjectURL(v.src); });
-    return new Blob(chunks, { type: (rec.mimeType || mime || "video/mp4").split(";")[0] });
+      });
+      rec.stop();
+      await done;
+      return new Blob(chunks, { type: (rec.mimeType || mime || "video/mp4").split(";")[0] });
+    }
   }
   window.fxJoinClips = joinClips;
 })();
@@ -405,7 +504,7 @@
     b.onclick = () => input.click();
     actions.prepend(b); actions.append(input);
     const ver = document.createElement("div");
-    ver.textContent = "Versión 5 · 1080p/2K/4K, portada, más transiciones";
+    ver.textContent = "Versión 6 · video unido fluido y descarga directa";
     ver.style.cssText = "font:600 12px Outfit,system-ui;color:#8ab4f8;margin:6px 0";
     actions.after(ver);
   }
