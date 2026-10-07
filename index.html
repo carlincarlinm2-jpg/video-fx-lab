@@ -15313,7 +15313,8 @@ qbUi.exportBtn?.addEventListener("click", async () => {
       for (const f of files) entries.push({ name: f.name, data: new Uint8Array(await f.blob.arrayBuffer()) });
       downloadBlob(makeZip(entries), `quizzes-${items.length}.zip`);
     }
-    if (!useZip && clips.length) window.showClipResults?.(clips);
+    if (!useZip && clips.length) window.showClipResults?.(clips, window.__fxBatchJoin ? { autoJoin: window.__fxBatchJoin } : {});
+    window.__fxBatchJoin = null;
     statusText.textContent = `Listo: ${items.length} quiz${items.length === 1 ? "" : "zes"} exportado${items.length === 1 ? "" : "s"}${useZip ? " en un .zip" : ""}.`;
   } finally {
     window.__captureDownloads = null;
@@ -15833,7 +15834,7 @@ redrawIdle();
 document.querySelector(`.sidebar .preset:not(.clone)[data-preset="${currentPreset}"]`)?.classList.add("active");
 
 </script>
-  <script src="/clips.js?v=3"></script>
+  <script src="/clips.js?v=4"></script>
 <script>if('serviceWorker' in navigator){let r=!!navigator.serviceWorker.controller;navigator.serviceWorker.register('/sw.js').then(g=>g.update());navigator.serviceWorker.addEventListener('controllerchange',()=>{if(r){r=false;location.reload()}});}</script>
 </body>
 </html>
