@@ -114,6 +114,7 @@
     window.applyPreset = function (key) {
       const r = origApply.apply(this, arguments);
       refreshPanel();
+      if (key === "phoneChat" || key === "phoneCall") { const of = document.querySelector("#outFormat"); if (of) { of.value = "mp4"; } }
       if (PHONE_KEYS.includes(key)) { syncDuration(); try { updateOutputs(); redrawIdle(); } catch {} }
       return r;
     };
