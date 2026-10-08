@@ -504,7 +504,7 @@
     b.onclick = () => input.click();
     actions.prepend(b); actions.append(input);
     const ver = document.createElement("div");
-    ver.textContent = "Versión 7 · chats de teléfono y 11 diseños de quiz nuevos";
+    ver.textContent = "Versión 8 · chat y llamada salen en MP4";
     ver.style.cssText = "font:600 12px Outfit,system-ui;color:#8ab4f8;margin:6px 0";
     actions.after(ver);
   }
