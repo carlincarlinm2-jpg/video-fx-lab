@@ -505,7 +505,7 @@
     b.onclick = () => input.click();
     actions.prepend(b); actions.append(input);
     const ver = document.createElement("div");
-    ver.textContent = "Versión 11 · exportar = video completo con portada y final";
+    ver.textContent = "Versión 12 · pega tu texto y sale el video completo";
     ver.style.cssText = "font:600 12px Outfit,system-ui;color:#8ab4f8;margin:6px 0";
     actions.after(ver);
   }
@@ -531,6 +531,15 @@
       zipLabel.style.display = on ? "none" : "";
     };
     box.querySelector("#qbJoin").onchange = () => { sync(); window.fxQbLabel?.(); }; sync();
+    // El "Título:" del texto se usa en la portada (si no la escribiste tú)
+    const cover = box.querySelector(".it");
+    let coverTouched = false;
+    cover.addEventListener("input", () => { coverTouched = true; });
+    window.fxSetCoverFromTitle = (title) => {
+      if (!title || coverTouched) return;
+      const t = title.trim().replace(/^preguntas?\s+de\s+/i, "");
+      cover.value = `¿CUÁNTO SABES DE ${t.toUpperCase()}?`;
+    };
     // Al tocar "Exportar" se crea el audio en ese momento (iPhone lo exige)
     document.querySelector("#qbExport")?.addEventListener("click", () => {
       if (!box.querySelector("#qbJoin").checked) { window.__fxBatchJoin = null; return; }

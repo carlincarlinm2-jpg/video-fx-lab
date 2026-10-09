@@ -1503,8 +1503,8 @@ kbd {
               <span id="qTotal" class="muted"></span>
             </div>
             <p class="hint">El contador baja, al llegar a cero hay una pausa de suspenso, se revela la respuesta y se queda en pantalla los segundos que elijas.</p>
-            <details id="qbBox" class="batch">
-              <summary>Varios quizzes a la vez: pega tu texto y saca un video por pregunta</summary>
+            <details id="qbBox" class="batch" open>
+              <summary>🎬 Video completo de quiz: pega tu texto y sale todo en un solo video</summary>
               <div class="batch-body">
                 <p class="hint">Pega todas tus preguntas. Cada una con sus opciones <b>a) b) c) d)</b> y una línea <b>Respuesta: b</b> (o pon un <b>*</b> junto a la correcta). Para verdadero o falso escribe "Verdadero o falso:" al inicio. Si arriba de todo pones <b>Título: Preguntas de primaria</b>, se usa como título de todos los videos. Se usa el diseño y los tiempos que tengas elegidos arriba.</p>
                 <textarea id="qbText" rows="9" spellcheck="false" placeholder="1. ¿Cuál es el planeta más grande?&#10;a) Marte&#10;b) Júpiter&#10;c) Saturno&#10;Respuesta: b"></textarea>
@@ -15271,7 +15271,20 @@ qbUi.parse?.addEventListener("click", () => {
   const title = applyParsedTitle(qbUi.text.value);
   renderQbList();
   if (title && qbUi.summary) qbUi.summary.textContent += ` Título: "${title}".`;
+  window.fxSetCoverFromTitle?.(title);
   if (!qbState.items.length) statusText.textContent = "No encontré preguntas. Pon cada pregunta en su renglón y las opciones como a) b) c).";
+});
+
+let qbAutoTimer = null;
+qbUi.text?.addEventListener("input", () => {
+  clearTimeout(qbAutoTimer);
+  qbAutoTimer = setTimeout(() => {
+    if (!qbUi.text.value.trim()) { qbState.items = []; renderQbList(); return; }
+    qbState.items = parseQuizText(qbUi.text.value);
+    const title = applyParsedTitle(qbUi.text.value);
+    renderQbList();
+    window.fxSetCoverFromTitle?.(title);
+  }, 500);
 });
 
 qbUi.example?.addEventListener("click", () => {
@@ -15869,8 +15882,8 @@ redrawIdle();
 document.querySelector(`.sidebar .preset:not(.clone)[data-preset="${currentPreset}"]`)?.classList.add("active");
 
 </script>
-  <script src="/extras.js?v=11"></script>
-<script src="/clips.js?v=11"></script>
+  <script src="/extras.js?v=12"></script>
+<script src="/clips.js?v=12"></script>
 <script>if('serviceWorker' in navigator){let r=!!navigator.serviceWorker.controller;navigator.serviceWorker.register('/sw.js').then(g=>g.update());navigator.serviceWorker.addEventListener('controllerchange',()=>{if(r){r=false;location.reload()}});}</script>
 </body>
 </html>
