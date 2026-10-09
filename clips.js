@@ -480,6 +480,7 @@
     }
   }
   window.fxJoinClips = joinClips;
+  window.__fxCards = { drawIntro, drawOutro, introSounds, outroSounds, sheet, saveFiles, isPhone };
 })();
 
 // Botón visible: elegir videos (del teléfono o recién exportados) para unirlos o guardarlos
@@ -504,7 +505,7 @@
     b.onclick = () => input.click();
     actions.prepend(b); actions.append(input);
     const ver = document.createElement("div");
-    ver.textContent = "Versión 8 · chat y llamada salen en MP4";
+    ver.textContent = "Versión 9 · video completo sin tirones (directo)";
     ver.style.cssText = "font:600 12px Outfit,system-ui;color:#8ab4f8;margin:6px 0";
     actions.after(ver);
   }
@@ -557,4 +558,188 @@
   }
   const init = () => { addButton(); addBatchOptions(); addQuality(); try { window.updateOutputs?.(); window.redrawIdle?.(); } catch {} };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
+})();
+
+
+// =====================================================================
+// Video completo DIRECTO: dibuja todas las preguntas en un solo video,
+// cuadro por cuadro, sin volver a leer videos (fluido en iPhone).
+// =====================================================================
+(function () {
+  const C = () => window.__fxCards;
+  const FPS = 30;
+
+  function ui(count) {
+    const { sheet } = C();
+    const body = sheet.querySelector(".body");
+    body.innerHTML = `<h3>Creando tu video</h3><p>Se dibujan las ${count} preguntas en un solo video, cuadro por cuadro. Puedes dejar el teléfono quieto; no cierres la app.</p>
+      <div class="join"><div class="bar"><span></span></div><p class="msg" style="margin:0">Preparando...</p><div class="result"></div></div>`;
+    sheet.hidden = false;
+    const bar = body.querySelector(".bar span"), msg = body.querySelector(".msg"), res = body.querySelector(".result");
+    return {
+      progress(p, text) { bar.style.width = Math.round(p * 100) + "%"; if (text) msg.textContent = text; },
+      done(blob, name, secs) {
+        const { saveFiles, isPhone } = C();
+        body.querySelector("h3").textContent = "Tu video está listo";
+        body.querySelector("p").textContent = `Listo en ${secs} s. Revísalo y guárdalo.`;
+        body.querySelector(".bar").hidden = true; msg.textContent = "";
+        const v = document.createElement("video"); v.src = URL.createObjectURL(blob); v.controls = true; v.playsInline = true;
+        const sb = document.createElement("button"); sb.className = "pri big"; sb.textContent = isPhone() ? "📲 Guardar en Fotos" : "⬇ Descargar video";
+        sb.onclick = () => saveFiles([{ name, blob }], sb);
+        res.append(v, sb);
+        if (isPhone()) {
+          const db = document.createElement("button"); db.className = "sec big"; db.textContent = "⬇ Descargar a Archivos";
+          db.onclick = () => saveFiles([{ name, blob }], db, "download");
+          const hint = document.createElement("p"); hint.style.marginTop = "8px";
+          hint.innerHTML = "En el menú de <b>Guardar en Fotos</b> toca <b>Guardar video</b>. <b>Descargar a Archivos</b> lo deja en la carpeta Descargas.";
+          res.append(db, hint);
+        }
+      },
+      fail(text) { msg.textContent = text; },
+    };
+  }
+
+  // items: [{prepare: () => void}] — deja la app lista para dibujar esa pregunta
+  async function renderSequence(quizzes, cfg) {
+    const t0 = performance.now();
+    const view = ui(quizzes.length);
+    stopPreview();
+    // 1) medir cada pregunta y su sonido
+    const segs = [];
+    for (let i = 0; i < quizzes.length; i++) {
+      quizzes[i].prepare();
+      const s = settings();
+      const dur = playbackDuration(s);
+      let audio = null;
+      try { audio = await renderAudioTrack(s, dur); } catch (e) { console.error(e); }
+      segs.push({ kind: "quiz", i, dur, audio });
+      view.progress(0.03 * (i + 1) / quizzes.length, `Preparando pregunta ${i + 1} de ${quizzes.length}...`);
+    }
+    const W = canvas.width, H = canvas.height;
+    const cards = C();
+    const items = [];
+    if (cfg.intro) items.push({ kind: "card", dur: 2.5, draw: (c, t) => cards.drawIntro(c, W, H, t, cfg.introText, quizzes.length), sfx: cards.introSounds });
+    segs.forEach((s) => items.push(s));
+    if (cfg.outro) items.push({ kind: "card", dur: 4, draw: (c, t) => cards.drawOutro(c, W, H, t, cfg.outroText), sfx: cards.outroSounds });
+    let T = cfg.tr === "cut" ? 0 : cfg.td;
+    T = Math.min(T, ...items.map((x) => x.dur / 2));
+    const start = []; let acc = 0;
+    items.forEach((x, i) => { start.push(acc); acc += x.dur - (i < items.length - 1 ? T : 0); });
+    const total = acc;
+    const TR_MIX = ["fade", "slide", "zoom", "circle", "wipe", "spin", "flash"];
+    const trFor = (i) => (cfg.tr === "mix" ? TR_MIX[i % TR_MIX.length] : cfg.tr);
+
+    // 2) codificador
+    const config = await pickVideoCodec(W, H, window.fxBitrate(W, H, total));
+    if (!config) throw new Error("Este navegador no tiene codificador H.264");
+    const samples = []; let avcC = null; let failed = null;
+    const enc = new VideoEncoder({
+      output: (chunk, meta) => {
+        if (meta?.decoderConfig?.description && !avcC) avcC = new Uint8Array(meta.decoderConfig.description);
+        const d = new Uint8Array(chunk.byteLength); chunk.copyTo(d); samples.push({ data: d, key: chunk.type === "key" });
+      },
+      error: (e) => { failed = e; },
+    });
+    enc.configure(config);
+
+    const mk = () => { const c = document.createElement("canvas"); c.width = W; c.height = H; return c; };
+    const out = mk(), octx = out.getContext("2d");
+    const live = mk(), lctx = live.getContext("2d");
+    const frozen = mk(), fctx = frozen.getContext("2d");
+    let prepared = -1, frozenFor = -1;
+
+    const renderItem = (idx, el, target, tctx) => {
+      const it = items[idx];
+      tctx.globalAlpha = 1;
+      if (it.kind === "card") { it.draw(tctx, el); return; }
+      if (prepared !== idx) { quizzes[it.i].prepare(); prepared = idx; }
+      const s = settings();
+      drawFrame(progressForElapsed(Math.min(el, it.dur - 0.001) * 1000, s), Math.min(el, it.dur - 0.001));
+      tctx.fillStyle = "#000"; tctx.fillRect(0, 0, W, H);
+      tctx.drawImage(canvas, 0, 0, W, H);
+    };
+    const put = (src, alpha = 1, dx = 0, scale = 1) => {
+      if (alpha <= 0) return;
+      octx.globalAlpha = alpha;
+      const w = W * scale, h = H * scale;
+      octx.drawImage(src, (W - w) / 2 + dx, (H - h) / 2, w, h);
+      octx.globalAlpha = 1;
+    };
+
+    try {
+      const frames = Math.ceil(total * FPS);
+      for (let f = 0; f < frames; f++) {
+        if (failed) throw failed;
+        const t = f / FPS;
+        let b = items.length - 1;
+        for (let i = 0; i < items.length; i++) if (t < start[i] + items[i].dur) { b = i; break; }
+        // ¿hay una siguiente que ya empezó (traslape)?
+        const nxt = b + 1 < items.length && t >= start[b + 1] ? b + 1 : -1;
+        const a = nxt >= 0 ? b : -1;
+        const cur = nxt >= 0 ? nxt : b;
+        if (a >= 0 && frozenFor !== a) {
+          renderItem(a, items[a].dur - 0.001, frozen, fctx);
+          frozenFor = a;
+        }
+        renderItem(cur, t - start[cur], live, lctx);
+        octx.fillStyle = "#000"; octx.fillRect(0, 0, W, H);
+        if (a < 0) put(live);
+        else {
+          const p = Math.min(1, Math.max(0, (t - start[cur]) / T)), e = p * p * (3 - 2 * p);
+          const kind = trFor(cur);
+          if (kind === "fade") { put(frozen); put(live, e); }
+          else if (kind === "black") { if (p < 0.5) put(frozen, 1 - p * 2); else put(live, (p - 0.5) * 2); }
+          else if (kind === "slide") { put(frozen, 1, -W * e); put(live, 1, W * (1 - e)); }
+          else if (kind === "zoom") { put(frozen, 1 - e, 0, 1 + e * 0.6); put(live, e, 0, 1.4 - 0.4 * e); }
+          else if (kind === "circle") { put(frozen); octx.save(); octx.beginPath(); octx.arc(W / 2, H / 2, Math.hypot(W, H) / 2 * e, 0, 7); octx.clip(); put(live); octx.restore(); }
+          else if (kind === "wipe") {
+            put(frozen); octx.save(); octx.beginPath(); const x = (W + H * 0.4) * e; octx.moveTo(0, 0); octx.lineTo(x, 0); octx.lineTo(x - H * 0.4, H); octx.lineTo(0, H); octx.closePath(); octx.clip(); put(live); octx.restore();
+            octx.fillStyle = "#ffd60a"; octx.beginPath(); octx.moveTo(x, 0); octx.lineTo(x + W * 0.02, 0); octx.lineTo(x - H * 0.4 + W * 0.02, H); octx.lineTo(x - H * 0.4, H); octx.fill();
+          } else if (kind === "spin") {
+            const src = p < 0.5 ? frozen : live, k = p < 0.5 ? p * 2 : (1 - p) * 2;
+            octx.save(); octx.translate(W / 2, H / 2); octx.rotate((p < 0.5 ? 1 : -1) * k * 0.6); octx.scale(1 - k * 0.5, 1 - k * 0.5); octx.translate(-W / 2, -H / 2); put(src); octx.restore();
+          } else if (kind === "flash") { put(p < 0.5 ? frozen : live); octx.fillStyle = `rgba(255,255,255,${1 - Math.abs(p - 0.5) * 2})`; octx.fillRect(0, 0, W, H); }
+          else put(live);
+        }
+        const vf = new VideoFrame(out, { timestamp: Math.round((f * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
+        enc.encode(vf, { keyFrame: f % (FPS * 2) === 0 });
+        vf.close();
+        while (enc.encodeQueueSize > 6) await new Promise((r) => setTimeout(r, 4));
+        if (f % 6 === 0) { view.progress(0.03 + 0.9 * f / frames, `Creando video... ${Math.round(f / frames * 100)}%`); await new Promise((r) => setTimeout(r, 0)); }
+      }
+      await enc.flush();
+    } finally { try { enc.close(); } catch {} }
+    if (failed || !samples.length || !avcC) throw failed || new Error("no se generó video");
+
+    // 3) sonido
+    view.progress(0.95, "Mezclando sonido...");
+    let audio = null;
+    try {
+      const off = new OfflineAudioContext(2, Math.ceil(total * 48000) + 4800, 48000);
+      items.forEach((it, i) => {
+        const t0 = start[i];
+        if (it.kind === "card") { it.sfx(off, off.destination, t0); return; }
+        if (!it.audio) return;
+        const src = off.createBufferSource(); src.buffer = it.audio;
+        const g = off.createGain(); src.connect(g).connect(off.destination);
+        g.gain.setValueAtTime(T && i > 0 ? 0 : 1, t0);
+        if (T && i > 0) g.gain.linearRampToValueAtTime(1, t0 + T);
+        if (T && i < items.length - 1) { g.gain.setValueAtTime(1, t0 + it.dur - T); g.gain.linearRampToValueAtTime(0, t0 + it.dur); }
+        src.start(t0, 0, it.dur);
+      });
+      const rendered = await off.startRendering();
+      const acfg = await pickAudioConfig();
+      if (acfg) audio = await encodeAudio(rendered, acfg);
+    } catch (e) { console.error("audio", e); }
+    const blob = new Blob([buildMp4({ width: W, height: H, fps: FPS, samples, avcC, audio })], { type: "video/mp4" });
+    view.progress(1);
+    view.done(blob, `quiz-completo-${quizzes.length}.mp4`, ((performance.now() - t0) / 1000).toFixed(0));
+    return blob;
+  }
+
+  window.fxCanDirect = () => typeof canFastExport === "function" && canFastExport();
+  window.fxRenderSequence = async (quizzes, cfg) => {
+    try { return await renderSequence(quizzes, cfg); }
+    catch (e) { console.error(e); const m = C().sheet.querySelector(".msg"); if (m) m.textContent = "No se pudo crear: " + e.message; return null; }
+  };
 })();

@@ -15285,6 +15285,36 @@ qbUi.exportBtn?.addEventListener("click", async () => {
   const items = qbState.items.filter((it) => it.include);
   if (!items.length || exporting) return;
   const originalPreset = currentPreset;
+  // Un solo video: se dibuja todo directo (sin exportar cada pregunta)
+  if (window.__fxBatchJoin && window.fxCanDirect?.() && window.fxRenderSequence) {
+    const cfg = window.__fxBatchJoin;
+    window.__fxBatchJoin = null;
+    try { cfg.ac?.close?.(); } catch (e) { /* nada */ }
+    const fmtSel0 = document.querySelector("#outFormat");
+    const prevFmt0 = fmtSel0?.value;
+    if (fmtSel0) fmtSel0.value = "mp4";
+    qbUi.exportBtn.disabled = true;
+    exporting = true;
+    try {
+      const quizzes = items.map((item, i) => ({
+        prepare: () => {
+          const key = loadItemIntoQuiz(item, i, items.length);
+          switchQuizKeepingFormat(key);
+        },
+      }));
+      statusText.textContent = "Creando el video completo...";
+      const blob = await window.fxRenderSequence(quizzes, cfg);
+      statusText.textContent = blob ? `Listo: video completo con ${items.length} preguntas.` : "No se pudo crear el video completo.";
+    } finally {
+      exporting = false;
+      if (fmtSel0 && prevFmt0) fmtSel0.value = prevFmt0;
+      qbUi.exportBtn.disabled = false;
+      if (QUIZ_KEYS.includes(originalPreset)) switchQuizKeepingFormat(originalPreset);
+      window.refreshQuizPanel?.();
+      redrawIdle();
+    }
+    return;
+  }
   const useZip = qbUi.zip?.checked === true;
   const files = [];
   const clips = [];
@@ -15836,8 +15866,8 @@ redrawIdle();
 document.querySelector(`.sidebar .preset:not(.clone)[data-preset="${currentPreset}"]`)?.classList.add("active");
 
 </script>
-  <script src="/extras.js?v=8"></script>
-<script src="/clips.js?v=8"></script>
+  <script src="/extras.js?v=9"></script>
+<script src="/clips.js?v=9"></script>
 <script>if('serviceWorker' in navigator){let r=!!navigator.serviceWorker.controller;navigator.serviceWorker.register('/sw.js').then(g=>g.update());navigator.serviceWorker.addEventListener('controllerchange',()=>{if(r){r=false;location.reload()}});}</script>
 </body>
 </html>
