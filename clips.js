@@ -505,7 +505,7 @@
     b.onclick = () => input.click();
     actions.prepend(b); actions.append(input);
     const ver = document.createElement("div");
-    ver.textContent = "Versión 9 · video completo sin tirones (directo)";
+    ver.textContent = "Versión 10 · video completo directo y más rápido";
     ver.style.cssText = "font:600 12px Outfit,system-ui;color:#8ab4f8;margin:6px 0";
     actions.after(ver);
   }
@@ -568,6 +568,10 @@
 (function () {
   const C = () => window.__fxCards;
   const FPS = 30;
+  // pausa corta que el navegador no frena aunque la página esté en segundo plano
+  const mc = new MessageChannel(); const waiters = [];
+  mc.port1.onmessage = () => { const w = waiters.shift(); if (w) w(); };
+  const yieldNow = () => new Promise((r) => { waiters.push(r); mc.port2.postMessage(0); });
 
   function ui(count) {
     const { sheet } = C();
@@ -704,8 +708,8 @@
         const vf = new VideoFrame(out, { timestamp: Math.round((f * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
         enc.encode(vf, { keyFrame: f % (FPS * 2) === 0 });
         vf.close();
-        while (enc.encodeQueueSize > 6) await new Promise((r) => setTimeout(r, 4));
-        if (f % 6 === 0) { view.progress(0.03 + 0.9 * f / frames, `Creando video... ${Math.round(f / frames * 100)}%`); await new Promise((r) => setTimeout(r, 0)); }
+        while (enc.encodeQueueSize > 6) await yieldNow();
+        if (f % 6 === 0) { view.progress(0.03 + 0.9 * f / frames, `Creando video... ${Math.round(f / frames * 100)}%`); await yieldNow(); }
       }
       await enc.flush();
     } finally { try { enc.close(); } catch {} }
