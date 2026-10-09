@@ -15171,12 +15171,15 @@ function switchQuizKeepingFormat(key) {
   updateOutputs();
 }
 
+window.fxQbLabel = () => renderQbList();
 function renderQbList() {
   if (!qbUi.list) return;
   const items = qbState.items;
   qbUi.actions.hidden = items.length === 0;
   const included = items.filter((it) => it.include).length;
-  if (qbUi.exportBtn) qbUi.exportBtn.textContent = `Exportar ${included} video${included === 1 ? "" : "s"}`;
+  if (qbUi.exportBtn) qbUi.exportBtn.textContent = document.querySelector("#qbJoin")?.checked === false
+    ? `Exportar ${included} video${included === 1 ? "" : "s"} por separado`
+    : `🎬 Crear video completo (${included} pregunta${included === 1 ? "" : "s"})`;
   const doubts = items.filter((it) => !it.sure).length;
   if (qbUi.summary) {
     qbUi.summary.textContent = items.length
@@ -15866,8 +15869,8 @@ redrawIdle();
 document.querySelector(`.sidebar .preset:not(.clone)[data-preset="${currentPreset}"]`)?.classList.add("active");
 
 </script>
-  <script src="/extras.js?v=10"></script>
-<script src="/clips.js?v=10"></script>
+  <script src="/extras.js?v=11"></script>
+<script src="/clips.js?v=11"></script>
 <script>if('serviceWorker' in navigator){let r=!!navigator.serviceWorker.controller;navigator.serviceWorker.register('/sw.js').then(g=>g.update());navigator.serviceWorker.addEventListener('controllerchange',()=>{if(r){r=false;location.reload()}});}</script>
 </body>
 </html>

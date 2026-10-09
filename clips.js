@@ -72,7 +72,7 @@
     }, i * 400));
   }
 
-  const JOIN_DEFAULTS = { intro: false, introText: "¿CUÁNTO SABES?", tr: "mix", td: 0.7, outro: true, outroText: "¡Dale like y suscríbete para más quizzes!" };
+  const JOIN_DEFAULTS = { intro: true, introText: "¿CUÁNTO SABES?", tr: "mix", td: 0.7, outro: true, outroText: "¡Dale like y suscríbete para más quizzes!" };
 
   function joinControlsHtml(o) {
     const opt = (v, l, cur) => `<option value="${v}"${String(v) === String(cur) ? " selected" : ""}>${l}</option>`;
@@ -505,7 +505,7 @@
     b.onclick = () => input.click();
     actions.prepend(b); actions.append(input);
     const ver = document.createElement("div");
-    ver.textContent = "Versión 10 · video completo directo y más rápido";
+    ver.textContent = "Versión 11 · exportar = video completo con portada y final";
     ver.style.cssText = "font:600 12px Outfit,system-ui;color:#8ab4f8;margin:6px 0";
     actions.after(ver);
   }
@@ -530,7 +530,7 @@
       if (on) zip.checked = false;
       zipLabel.style.display = on ? "none" : "";
     };
-    box.querySelector("#qbJoin").onchange = sync; sync();
+    box.querySelector("#qbJoin").onchange = () => { sync(); window.fxQbLabel?.(); }; sync();
     // Al tocar "Exportar" se crea el audio en ese momento (iPhone lo exige)
     document.querySelector("#qbExport")?.addEventListener("click", () => {
       if (!box.querySelector("#qbJoin").checked) { window.__fxBatchJoin = null; return; }
